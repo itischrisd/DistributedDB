@@ -64,11 +64,10 @@ As mentioned earlier, a node executes the logic for handling a request only duri
 
 ## Compilation
 
-The project can be compiled using the provided compilation script compile.bat, which contains the following commands:
+The project can be compiled using the following command:
 
 ```
 javac *.java
-pause
 ```
 
 It is compatible with Java 1.8.
