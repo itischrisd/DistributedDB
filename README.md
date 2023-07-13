@@ -1,93 +1,90 @@
 # DistributedDB
-Distributed database application created as final project assignment for Computer Networks course on PJAIT
 
-Opis projektu rozproszonej bazy danych z przedmiotu SKJ
+This project is a distributed database application developed as a final project assignment for the SKJ (Computer Networks nad Java Netowrk Programming) practical classes, taught by Piotr Smażyński during studies on [PJAIT](https://www.pja.edu.pl/en/).
 
+## Project Description
 
-# PROTOKÓŁ - STRUKTURA PAKIETU
+The DistributedDB project aims to implement a distributed database system using a non-directed graph network structure. The system allows for the storage and retrieval of key-value pairs across multiple nodes, providing fault tolerance and scalability. The implementation includes a custom communication protocol for exchanging messages between nodes and routing packets within the database. The main goal of the project was to address different aspects of network topics, which is reflected by the following techincal description.
 
-Zrozumiały opis implementacji projektu najłatwiej zacząć od opisu protokołu zaimplementowanego na potrzeby rozproszonej bazy danych, a w szczególności od struktury komunikatu. Ułatwi to późniejsze wyjaśnienie sposobu łączenia i rozłączania węzłów, routingu pakietów wewnątrz bazy, ich przetwarzania, a co za tym idzie dostarczenia usług klientowi.
+## Protocol - Packet Structure
 
-W systemie zaimplementowano dwie wersje obsługiwanych komunikatów.
+To understand the implementation of the distributed database project, it's important to describe the protocol used for communication within the database. The protocol consists of two types of messages: simple messages and complex messages.
 
-Pierwszy - prosty - jest identyczny z komunikatem przesyłanym przez klienta (zgodny z wymaganiami projektowymi). Jest więc wykorzystywany do przyjęcia żądania od klientów, przesłania do nich ostatecznej odpowiedzi przez węzeł brzegowy, ale również, ze względu na swą prostotę, do informowania węzłów-sąsiadów o wyłączającym się węźle (przekazanie informacji sąsiadom o tym, że nadawca wykonał polecenie 'terminate'). Struktura pakietu, zgodna z wymaganiem projektowym w zakresie obsługi żądań klienta, wygląda następująco:
+1. Simple Messages: These messages are identical to the ones sent by the client and are used for accepting client requests, forwarding the final response from a gateway node to the client, and informing neighboring nodes about a node's termination. The structure of a simple message, following the project requirements, is as follows:
 
-<POLE POLECENIA> <POLE CIAŁA ŻĄDANIA/ODPOWIEDZI>
+```
+<COMMAND FIELD> <REQUEST/RESPONSE BODY>
+```
 
-Pola oddzielone są od siebie znakiem spacji. Oba pola nie są obowiązkowe, tzn. jeśli komunikat jest odpowiedzią dla klienta, to nie będzie zawierał pola polecenia (np. 'ERROR', 'OK', '127.0.0.1:9000'), a jeśli jest żądaniem typu 'terminate', nie będzie zawierał pola ciała. Poza realizacją usług dla klienta węzły wymieniają między sobą następujące komunikaty proste:
-- handshake <adres nowego węzła> - nowy węzeł wysyła informację o tym, że chce przyłączyć się do istniejącego węzła i przez jaki adres chciałby się identyfikować
-- OK - taki komunikat przesyła do swoich sąsiadów węzeł, wykonujący polecenie 'terminate'; jest to z punktu widzenia połączeń miedzywęzłowych komunikat unikatowy, tak więc działające węzły wiedzą, że taką wiadomość wysyłają jedynie sąsiedzi kończący swoje działanie w systemie
+The fields are separated by spaces, and both fields are optional. If the message is a response to a client, it won't contain the command field (e.g., 'ERROR', 'OK', '127.0.0.1:9000'). If the message is a 'terminate' command, it won't contain the request body. Simple messages are also used to inform neighboring nodes about a terminating node.
 
-Drugi typ komunikatów - złożony - służy do propagacji żądań wewnątrz systemu, a także do przekazywania zwrotnej odpowiedzi. Jego struktura jest następująca:
+2. Complex Messages: These messages are used for propagating requests within the system and for transmitting responses. The structure of a complex message is as follows:
 
-<ID> <POLE POLECENIA> <CIAŁO ŻĄDANIA> <CIAŁO ODPOWIEDZI> <POLE HISTORII PAKIETU>
+```
+<ID> <COMMAND FIELD> <REQUEST BODY> <RESPONSE BODY> <PACKET HISTORY FIELD>
+```
 
-Tak jak w przypadku komunikatu prostego, poszczególne pola oddzielone są znakiem spacji. Zawierają one następujące informacje:
-- ID - pozwala jednoznacznie identyfikować pakiet związany z obsługą pojedynczego, unikatowego żądania klienta wewnątrz systemy, jest nadawany przez pierwszy węzeł odbierający żądanie klienta i jest określany przez czas sytemu węzła brzegowego w sekundach; w tym miejscu warto zauważyć, że dzięki niemu możliwe jest szybkie rozróżnianie przez węzły pakietów prostych (od/dla klienta, informujących o nowym i zamykającym się węźle) od złożonych - pierwszym znakiem pakietu złożonego jest zawsze cyfra, a prostego zawsze litera; pole ID jest niezmienne przez cały cykl życia żądania; skopiowana wartość z komunikatu prostego otrzymanego od klienta, również niezmienna po jej pierwszym ustawieniu, pozwala węzłom identyfikować, które funkcje wewnątrz swojej logiki należy wykonać w ramach obsługi żądania
-- ciało żądania - ostatnia z wartości niezmiennych - jeśli żądanie klienta posiadało parametr, jego wartość będzie wstawiona tutaj; w przeciwnym wypadku pole zostanie utworzone z wartością "NUL" (nie mylić z javowym null, chodzi o ciąg trzech znaków)
-- ciało odpowiedzi - pole wykorzystywane do wystosowania odpowiedzi systemu na żądanie klienta; początkowo nadawana mu jest wartość "ERROR", tak by brak możliwości zrealizowania żądania przez system pozostawał wartością domyślną; gdy któryś z węzłów jest w stanie zrealizować żądanie (np udało mu się wykonać 'set-value', albo jego adres posiada odpowiedź na 'find-key x'), umieszcza w tym polu stosowne dane, nadpisując początkowy "ERROR"
-- pole historii pakietu - umożliwia realizację optymalnego routingu komunikatu z żądaniem klienta; gdy pakiet o unikatowym ID pierwszy raz trafia do węzła, dopisuje on w tym polu, na jego końcu, swój adres w formacie IP:PORT (poszczególne adresy oddzielone są przecinkiem); dzięki temu każdy węzeł a) obsługuje pakiet tylko raz, oraz b) wie, którzy z jego sąsiadów obsługiwali już pakiet (do tych węzłów pakietu już nie prześle, szczegóły w sekcji ROUTING); kolejne adresy są oddzielone przecinkami, tak więc razem stanowią ciąg bez znaku spacji - w myśl projektu protokołu stanowią jedno pole
+Again, the fields are separated by spaces. They contain the following information:
 
-
-# OBSŁUGA TOPOLOGII SIECI
-
-W największym uproszczeniu - implementacja systemu rozproszonego pozwala na realizację sieci węzłów bazodanowych o postaci dowolnego, nieskierowanego grafu. Aspekt techniczny tej immplementacji został zrealizowany następująco - każdy węzeł w momencie uruchomienia tworzy obiekt klasy ServerSocketChannel tworzący gniazdo zadane przez parametr uruchomieniowy. Gniazdo to działa w trybie non-blocking, tzn. nieustannie, tak długo jak działa węzeł, czeka na danym porcie na dane lub handshake TCP od węzła/klienta chcącego z nim nawiązać nowe połączenie. Node działa w niekończącej się pętli, za każdym razem sprawdzając, czy obiekt ServerSocketChannel zwróci nowe gniazdo (czy też null, gdy nikt nie czeka po drugiej stronie na nawiązanie połączenia TCP). Jeśli nowe gniazdo zostanie utworzone, węzeł doda je do listy obsługiwanych połączeń i sprawdzi przy każdej iteracji, czy strumień danych posiada dane przychodzące do obsłużenia, czy też null. Dodatkowo, gdy na gnieździe pakietem przychodzącym będzie komunikat prosty typu handshake, węzeł doda gniazdo do listy znanych sąsiadów, będących elementami bazy rozproszonej. W momencie, gdy węzeł stwierdzi, że gniazdo zostało zamknięte, usunie je z listy i nie będzie go więcej sprawdzał ani przekazywał dalej do niego żadnych pakietów. Testy wykazały, że samo utworzenie i zamknięcie sieci jest możliwe dla co najmniej 20 węzłów połączonych w niebanalne struktury grafowe. Dodatkowym atutem takiego rozwiązania jest fakt, że każdy węzeł posiada oddzielne połączenie ze swoim sąsiadem w dupleksie. Ta korzyść, w połączeniu z algorytmem routingu i sposobem identyfikacji unikatowych żądań, pozwoliła spełnić wymaganie projektowe nr 3.4 - równoległe obsługiwanie wielu klientów podłączonych do dowolnych węzłów brzegowych (testy wkonano dla 7 węzłów i 7 równoczesnych połączeń z klientami).
-
-
-# ROUTING PAKIETÓW
-
-Do pełnego wytłumaczenia, w jaki sposób system rozproszony przesyła pakiet z komunikatem żądania/odpowiedzi między swoimi węzłami, jest konieczna informacja o drugim miejscu, w którym przechowywane są dane o pakiecie. Pierwszym było samo pole komunikatu z historią jego wędrówki po węzłach. Drugim jest pamięć samych węzłów. W momencie, gdy pojedynczy węzeł otrzyma pakiet od klienta lub sąsiadującego węzła, sprawdzi (korzystając z pola ID), czy jest to pierwszy raz, gdy pakiet powiązany z żądaniem trafia do niego, czy jest to kolejny raz. W przypadku pierwszych "odwiedzin" pakietu węzeł dodaje do swojej pamięci dane w postaci klucz:wartość, w której unikatowym kluczem jest ID pobrane z pakietu, a wartością adres nadawcy, od którego węzeł dostał pakiet po raz pierwszy (wartość nigdy nie jest nadpisana, zawsze wskazuje na adres tego nadawcy, który był dla węzła "oryginalnym" nadawcą). Pierwsza wizyta pakietu w węźle jest też jedyną, przy której węzeł wykonuje metodę wskazaną przez pole polecenia, z argumentem ciała żądania i, jeśli to konieczne, umieszcza właściwą odpowiedź w polu ciała odpowiedzi.
-
-Kolejnym elementem routingu pakietu jest, po obsłużeniu logiki wymaganej przez żądanie, przeiterowanie po gniazdach podłączonych sąsiadów i wysłanie pakietu do pierwszego sąsiada, którego adres nie znajduje się w polu historii komunikatu. Jeśli węzeł w oparciu o to sprawdzenie stwierdzi, że komunikat ten był już w każdym z jego sąsiadów (bo np. jedynym jego sąsiadem jest nadawca, albo pakiet właśnie pokonuje drogę powrotną do klienta), wtedy ponownie sprawdzi swoją pamięć, odszukując po kluczu równym ID z pola pakietu, wartość IP:PORT węzła, od którego dostał komunikat. Po pobraniu wartości węzeł sprawdzi, które z jego gniazd odpowiada właściwemu adresowi i do niego odeśle pakiet, który w jego sąsiedztwie z punktu widzenia żądania można uznać za obsłużone.
-
-Dodatkową rzeczą, którą przed wysłaniem "w górę hierarchii" obsłużonego pakietu sprawdzi węzeł, jest fakt, czy aby sam nie był pierwszym adresem w historii pakietu. Jeśli tak jest, to znaczy że oryginalnym nadawcą jest w jego przypadku klient. Węzeł przed wysłaniem danych przekonwertuje komunikat złożony do komunikatu prostego, tak aby klient otrzymał te (i tylko te) dane, o które żądał.
-
-Po krótkim omówieniu routingu i przy założeniu, że sieć stanowiąca bazę rozproszoną jest dowolnym grafem nieskierowanym, nietrudno zauważyć, że routing opiera się o implementację własną algorytmu Depth Search First (przeszukiwania grafu w głąb). Jest to implementacja, która pozwala, by w rozwiązaniu postawionego w projekcie problemu a) żądanie nie było rozwiązywane przez każdy węzeł więcej niż raz, b) żądanie trafiło do każdego węzła bazy rozproszonej, c) pakiet z żądaniem nie uległ duplikacji ani zakleszczeniu w żadnym miejscu, a także d) pakiet z odpowiedzią znalazł drogę powrotną do klienta bez koordynacji węzłów między sobą, wracając zawsze tą samą drogą, jaką przyszedł, jednak nie wchodząc w pomijalne gałęzie grafu.
+- ID: This field uniquely identifies a packet associated with a specific client request within the system. It is assigned by the first node receiving the client request and is determined by the system time in seconds. The ID allows for quick differentiation between simple packets (related to/from clients or terminating nodes) and complex packets. Complex packets always start with a digit, while simple packets always start with a letter. The ID field remains unchanged throughout the packet's life cycle and is used by nodes to identify which functions within their logic to execute when processing the request.
+- Command Field: This field specifies the command associated with the request.
+- Request Body: This field contains the parameters of the client request. If the client request has no parameters, the field is created with the value "NUL."
+- Response Body: This field is used to provide the response to the client request. Initially, it is set to "ERROR" to indicate that the request couldn't be fulfilled. If a node can fulfill the request (e.g., by executing a 'set-value' command or having the response to a 'find-key x' command), it replaces the initial "ERROR" value with the appropriate data.
+- Packet History Field: This field allows for optimal routing of the request packet. When the packet arrives at a node for the first time, it appends its IP:PORT address (separated by commas) to the end of this field. This ensures that each node processes the packet only once and knows which of its neighbors have already processed it. The addresses are concatenated without spaces, as specified in the protocol.
 
 
-# PRZETWARZANIE PAKIETÓW
+## Network Topology Handling
 
-Tak jak zostało to opisane w poprzednim punkcie, węzeł realizuje logikę obsługi żądania tylko dla pierwszej wizyty pakietu żądania. Bez wchodzenia w szczegóły implementacji funkcji javowych, rozproszenie obsługi poszczególnych poleceń uzyskano w następujący sposób:
+The distributed database system supports the implementation of a network of database nodes represented by an arbitrary non-directed graph. The technical aspect of this implementation is as follows: when a node starts, it creates a ServerSocketChannel object that listens on a specified port, as provided by the command-line parameter. The socket operates in non-blocking mode, continuously waiting for incoming TCP connections or TCP handshakes from other nodes/clients. Each node runs in an infinite loop, checking if the ServerSocketChannel object returns a new socket (or null if no connection is waiting on the other side). If a new socket is created, the node adds it to the list of established connections and checks during each iteration if the data stream has incoming data to process. Additionally, when a handshake message is received on a socket, the node adds the socket to its list of known neighbors in the distributed database. If a node determines that a socket has been closed, it removes it from the list and stops checking it or forwarding packets to it. Tests have shown that the creation and closing of connections work for at least 20 nodes connected in non-trivial graph structures. Another advantage of this approach is that each node has a separate duplex connection with its neighbor. This, combined with the routing algorithm and the method of identifying unique requests, fulfills the project requirement 3.4 for parallel handling of multiple clients connected to any border nodes (tests were performed with 7 nodes and 7 simultaneous client connections).
 
-- set-value - Pakiet trawersuje sieć w poszukiwaniu węzła o zadanym kluczu. Dopóki go nie odnajdzie, pole komunikatu ciała odpowiedzi posiadać będzie wartość "ERROR", nadaną w momencie utworzenia. Jeśli pakiet nie odnajdzie węzła o właściwym kluczu i powróci do węzła brzegowego, siłą rzeczy taka właśnie wartość będzie przekazana do klienta. Jeśli po drodze jeden lub więcej węzłów okaże się posiadać stosowny klucz, ustawi u siebie wartość z pola ciała żądania, do pola ciała odpowiedzi wpisze wartość "OK" i przekaże pakiet dalej. Pakiet trafi do każdego węzła i w każdym węźle o zadanym kluczu ustawiona zostanie przekazana wartość.
+## Packet Routing
 
-- get-value - Tak jak w przypadku set-value - pakiet przejdzie po całym systemie, a każdy węzeł posiadający właściwy klucz nadpisze pole ciała odpowiedzi swoim kluczem:wartością (nadpisując ERROR, jeśli był pierwszym pomyślnym dopasowaniem, lub poprzedni klucz:wartość, jeśli kolejnym).
+To fully explain how the distributed system routes request/response packets between its nodes, it's necessary to understand how packet data is stored. The first storage location is the packet's history field, which tracks its journey through the nodes. The second is the memory of each node. When a node receives a packet from a client or a neighboring node, it checks (based on the ID field) if it's the first time the packet related to the request arrives at the node or if it has visited the node before. For the first visit, the node adds the key-value pair to its memory, where the key is the ID taken from the packet and the value is the IP address of the original sender (the "original" sender is the one that first sent the packet to the node). The value is never overwritten and always points to the original sender's address. The first visit to a node is the only time the node executes the method specified by the command field, using the request body as an argument, and if necessary, it updates the response body field with the appropriate data.
 
-- find-key - Identyczna implementacja, jak w przypadku get-value. Również tutaj pomyślne znalezienie klucza nie wpływa na algorytm routingu, pakiet przejdzie przez całą sieć, zwracając de facto ostatni adres IP:PORT właściciela poszukiwanego klucza.
+The next step in packet routing is iterating through the connected sockets to find the first neighbor whose address is not in the packet's history field. If a node determines that all of its neighbors have already processed the packet (e.g., the sender is the only neighbor or the packet is on its return path to the client), it checks its memory to find the value associated with the key equal to the packet's ID. After obtaining the value, the node identifies the corresponding socket and forwards the packet to that socket, considering the request already handled by its neighbors.
 
-- get-max - Pakiet żądania okrążając sieć wywołuje sprawdzenie w węźle, czy posiadana wartość jest większa od wpisanej w pole ciała odpowiedzi. Jeśli tak, nadpisze ją swoją własną. Jeśli jest pierwszym węzłem na drodze pakietu, to zawsze wpisze w pole swoje klucz:wartość.
+Before sending the processed packet "up the hierarchy," the node checks if it is the first address in the packet's history. If it is, it means that the client is the original sender. In this case, before forwarding the packet, the node converts the complex message to a simple message so that the client receives only the requested data.
 
-- get-min - Identycznie jak dla get-max, z tym, że poszukiwana jest oczywiście wartość najmniejsza.
+With this routing explanation, and assuming that the network forming the distributed database is an arbitrary non-directed graph, it becomes clear that the routing is based on a custom Depth Search First algorithm. This implementation ensures that:
+- Each request is handled by each node only once.
+- The request reaches every node in the distributed database.
+- The request packet is not duplicated or deadlocked anywhere in the network.
+- The response packet finds its way back to the client without coordination between nodes, always returning through the same path it came from, while bypassing irrelevant branches in the graph.
 
-- new-reocrd - Jedyny rodzaj żądania od klienta, które nie wywołuje w węźle przekazania pakietu do wewnętrznego algorytmu routingu. Węzeł umieszcza w swojej pamięci wewnętrznej otrzymaną klucz:wartość i odsyła do nadawcy-klienta komunikat o treści "OK"
+## Packet Processing
 
-- termiante - Po otrzymaniu od klienta komunikatu o treści "terminate" węzeł przed zamknięciem wysyła do każdego socketu, który posiada, wiadomość "OK", a potem zamyka gniazda. Dzięki temu klient otrzymuje odpowiedź, której oczekuje, a węzły - sąsiedzi po otrzymaniu takiego samego komunikatu "OK" wiedzą, że nadawca zakończył żywot, więc należy zamknąć po swojej stronie jego gniazdo i usunąć je z listy posiadanych połączeń i sąsiadów.
+As mentioned earlier, a node executes the logic for handling a request only during the first visit of the associated packet. Without going into the details of the Java implementation functions, the distribution of the processing for each command is as follows:
+- set-value: The packet traverses the network in search of a node with the specified key. Until it finds a matching node, the response body of the packet contains the initial "ERROR" value. If the packet doesn't find a node with the correct key and returns to a gateway node, it will naturally transmit the "ERROR" value back to the client. If, along the way, one or more nodes are found to have the matching key, each node sets the value from the request body in its memory and updates the response body to "OK" before forwarding the packet. The packet reaches every node, and each node with the specified key will have the corresponding value set.
+- get-value: Similar to the set-value command, the packet traverses the entire system, and each node with the matching key overwrites the response body field with its own key-value pair (overwriting "ERROR" if it was the first successful match or the previous key-value pair if subsequent matches occur).
+- find-key: This command is implemented identically to the get-value command. The packet also traverses the entire system, and each node with the matching key overwrites the response body field with its own key-value pair. In this case, the packet returns the last IP:PORT address of the owner of the searched key.
+- get-max: The request packet traverses the network, and each node compares its stored value with the one in the response body field. If the stored value is greater, it overwrites the response body field with its own key-value pair. If the node is the first in the packet's path, it always inserts its key-value pair in the response body field.
+- get-min: Similar to the get-max command, but in this case, the node looks for the smallest value.
+- new-record: This is the only client request that doesn't trigger packet forwarding within the internal routing algorithm. The node simply adds the key-value pair from the request body to its internal memory and sends an "OK" message back to the client.
+- terminate: Upon receiving a "terminate" message from a client, a node sends an "OK" message to each of its sockets and closes the connections. This ensures that the client receives the expected response, and the neighboring nodes, upon receiving the same "OK" message, know that the sender has terminated and should close the connection from their side, removing it from their lists of established connections and neighbors.
 
+## Compilation
 
-# KOMPILACJA
+The project can be compiled using the provided compilation script compile.bat, which contains the following commands:
 
-Zgodnie ze skryptem dostarczonym przez dr Adama Smyka - skrypt compile.bat, o zawartości:
-
+```
 javac *.java
 pause
+```
 
-Przy wykorzystaniu Javy 1.8.
+It is compatible with Java 1.8.
 
+## Execution
 
-# URUCHOMIENIE
+The execution of the project follows the requirements specification. Prepared test scenarios can be run from .bat files on Windows platforms.
 
-W pełni zgodne ze specyfikacją wymagań projektowych.
+## Known Issues
 
+The author encountered an issue related to the address of the first node in the database. Each node, upon establishing a connection, checks its address based on the socket used for the connection with another existing node. The first node in the network does not create such a socket, so the author manually set the address of the first node to 127.0.0.1. Due to this limitation, the database may not function properly on nodes running on separate computers. The only problems faced by the author were related to network topologies forming a ring structure. No other issues were identified, although, following the 7th testing principle, "The belief that there are no bugs is itself a bug."
 
+## License, disclaimers, known issues
 
-# CO NIE ZOSTAŁO ZAIMPLEMENTOWANE
+The following code is distributed under the [GPLv3](./LICENSE).
 
-n/d, wszystkie wymagania projektowe zostały spełnione, każdy skrypt dostarczony wraz z projektem pomyślnie zakończył działanie na komputerze autora rozwiązania.
+---
 
-
-
-# CO NIE DZIAŁA
-
-Autor napotkał problem w postaci adresu pierwszego węzła w bazie. Każdy węzeł w momencie utworzenia połączenia sprawdza swój adres w oparciu o gniazdo, którego używa w połączeniu do innego, istniejącego węzła. Pierwszy węzeł sieci nie tworzy takiego gniazda, dlatego autor "zadrutował" pierwszemu węzłowi na stałe adres 127.0.0.1. Z oczywistych przyczyn może to wykluczyć funkcjonowanie bazy na węzłach uruchomionych na oddzielnych komputerach. Jedyne problemy, jakie to przysporzyło autorowi, dotyczyły sieci węzłów bazy danych o topologii pierścienia. Innych usterek nie stwierdzono, chociaż, w myśl 7-mej zasady testowania:
-
-"Przekonanie o braku błędów jest błędem"
+If you need some help, notice any bugs or come up with possible improvements, feel free to reach out to me and/or create a pull request.
