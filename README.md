@@ -1,6 +1,6 @@
 # DistributedDB
 
-This project is a distributed database application developed as a final project assignment for the SKJ (Computer Networks nad Java Netowrk Programming) practical classes, taught by Piotr Smażyński during studies on [PJAIT](https://www.pja.edu.pl/en/).
+This project is a distributed database application developed as a final project assignment for the SKJ (Computer Networks nad Java Network Programming) practical classes, taught by Piotr Smażyński during studies on [PJAIT](https://www.pja.edu.pl/en/).
 
 ## Project Description
 
