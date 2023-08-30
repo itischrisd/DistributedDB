@@ -10,23 +10,84 @@ import java.util.Scanner;
 
 public class DatabaseNode {
 
-    private static String IP = "127.0.0.1";
-    private static int PORT = 2137;
-    private static CommunicationHandler communicationHandler;
-    private static final LinkedList<Socket> sockets = new LinkedList<>();
-    private static final HashMap<String, Socket> node_sockets = new HashMap<>();
-    private static final HashMap<String, String> local_packet_history = new HashMap<>();
-    private static int[] data = new int[2];
-    private static boolean terminate = false;
+    private final HashMap<Connection, String> connections = new HashMap<>();
+    private final HashMap<String, String> localPacketHistory = new HashMap<>();
+    private String IP = "127.0.0.1";
+    private int PORT = 2137;
+    private int[] record = new int[2];
+    private boolean terminate = false;
+
+    public DatabaseNode(String[] parameters) {
+        for (int i = 0; i < parameters.length; i++) {
+            switch (parameters[i]) {
+                case "-tcpport":
+                    setPortFromParameter(parameters[i++]);
+                    break;
+                case "-record":
+                    setRecordFromParameter(parameters[i++]);
+                    break;
+                case "-connect":
+                    connectToNodeFromParameter(parameters[i++]);
+                    break;
+            }
+        }
+    }
 
     public static void main(String[] args) {
-        communicationHandler = new CommunicationHandler();
-        setUp(args);
-        awaitConnections();
+        DatabaseNode databaseNode = new DatabaseNode(args);
+        databaseNode.awaitConnections();
         tearDown();
     }
 
-    private static void awaitConnections() {
+    private static void tearDown() {
+        try {
+            for (Socket socket : connections) {
+                connection.setOutgoingMessage("OK");
+                connection.pushMessage(socket);
+                socket.close();
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        System.out.println("Node terminated, all sockets closed");
+        Scanner scanner = new Scanner(System.in);
+        scanner.nextLine();
+    }
+
+    public static void addToPacketHistory(String id, String origin) {
+        DatabaseNode.localPacketHistory.put(id, origin);
+    }
+
+    private void setPortFromParameter(String port) {
+        PORT = Integer.parseInt(port);
+        log("Set up port: " + PORT);
+    }
+
+    private void setRecordFromParameter(String record) {
+        String[] recordData = record.split(":");
+        this.record[0] = Integer.parseInt(recordData[0]);
+        this.record[1] = Integer.parseInt(recordData[1]);
+        log("Set up record: " + this.record[0] + ":" + this.record[1]);
+    }
+
+    private void connectToNodeFromParameter(String nodeAddress) {
+        String[] connectionData = nodeAddress.split(":");
+        String host = connectionData[0];
+        int port = Integer.parseInt(connectionData[1]);
+
+        try {
+            Connection connection = new Connection(host, port);
+            connections.put(connection, connection.getInetAddress().getHostAddress() + ":" + port);
+            connection.pushMessage("handshake" + " " + IP + ":" + PORT);
+            log("Connected to node: " + host + ":" + port);
+            log("Added node " + connection.getRemoteAddress() + " known as " + connection.getRemoteHost() + ":" + port);
+            IP = connection.getLocalAddress().getHostAddress(); ///TODO nieeleganckie IP
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public void awaitConnections() {
 
         // Create new non-blocking server socket channel
         ServerSocketChannel serverSocketChannel = null;
@@ -34,7 +95,7 @@ public class DatabaseNode {
             serverSocketChannel = ServerSocketChannel.open();
             serverSocketChannel.bind(new InetSocketAddress(PORT));
             serverSocketChannel.configureBlocking(false);
-            log("Node socket channel hearing on port " + PORT);
+            log("Node socket channel hearing on port: " + PORT);
         } catch (IOException e) {
             e.printStackTrace();
         }
@@ -47,18 +108,27 @@ public class DatabaseNode {
                 SocketChannel socketChannel = serverSocketChannel != null ? serverSocketChannel.accept() : null;
                 if (socketChannel != null) {
                     log("Socket connected, adding");
-                    sockets.add(socketChannel.socket());
+                    connections.add(socketChannel.socket());
                 }
 
                 //remove closed sockets
-                sockets.removeIf(Socket::isClosed);
+                connections.removeIf(Socket::isClosed);
 
                 // handle incoming messages
-                for (Socket socket : sockets) {
-                    if (socket.isClosed())
-                        continue;
-                    communicationHandler.pullMessage(socket);
-                    String incomingMessage = communicationHandler.getIncomingMessage();
+                for (Connection connection : connections) {
+                    if (connection.isClosed()) continue;
+                    String incomingMessage = connection.pullMessage();
+                    switch (incomingMessage) {
+                        case "OK":
+                            for (Map.Entry<String, Socket> entry : node_sockets.entrySet()) {
+                                if (entry.getValue().equals(socket)) {
+                                    node_sockets.remove(entry.getKey());
+                                    break;
+                                }
+                            }
+                            log("Disconnected node " + socket.getInetAddress().getHostAddress() + ":" + socket.getPort());
+                            break;
+                    }
                     if (incomingMessage.isEmpty()) {
                         //noinspection UnnecessaryContinue
                         continue;
@@ -102,90 +172,39 @@ public class DatabaseNode {
         }
     }
 
-    private static void setUp(String[] args) {
-        for (int i = 0; i < args.length; i++) {
-            switch (args[i]) {
-                case "-tcpport":
-                    PORT = Integer.parseInt(args[++i]);
-                    break;
-                case "-record":
-                    String[] node_data = args[++i].split(":");
-                    data[0] = Integer.parseInt(node_data[0]);
-                    data[1] = Integer.parseInt(node_data[1]);
-                    break;
-                case "-connect":
-                    String[] connect_data = args[++i].split(":");
-                    String address = connect_data[0];
-                    int port = Integer.parseInt(connect_data[1]);
-                    try {
-                        Socket socket = new Socket(address, port);
-                        sockets.add(socket);
-                        IP = socket.getLocalAddress().getHostAddress();
-                        communicationHandler.setOutgoingMessage("handshake" + " " + IP + ":" + PORT);
-                        communicationHandler.pushMessage(socket);
-                        log("Connected to node " + address + ":" + port);
-                        node_sockets.put(socket.getInetAddress().getHostAddress() + ":" + port, socket);
-                        log("Added node " + socket.getInetAddress().getHostAddress() + ":" + socket.getPort() + " known as " + socket.getInetAddress().getHostAddress() + ":" + port);
-                    } catch (IOException e) {
-                        e.printStackTrace();
-                    }
-                    break;
-            }
-        }
-    }
-
-    private static void tearDown() {
-        try {
-            for (Socket socket : sockets) {
-                communicationHandler.setOutgoingMessage("OK");
-                communicationHandler.pushMessage(socket);
-                socket.close();
-            }
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-        System.out.println("Node terminated, all sockets closed");
-        Scanner scanner = new Scanner(System.in);
-        scanner.nextLine();
-    }
-
-    private static void log(String message) {
+    private void log(String message) {
         System.out.println(message);
     }
 
-    public static HashMap<String, String> getLocal_packet_history() {
-        return local_packet_history;
+    public HashMap<String, String> getLocal_packet_history() {
+        return localPacketHistory;
     }
 
-    public static void addToPacketHistory(String id, String origin) {
-        DatabaseNode.local_packet_history.put(id, origin);
+    public int[] getRecord() {
+        return record;
     }
 
-    public static int[] getData() {
-        return data;
+    public void setRecord(int[] record) {
+        DatabaseNode.record = record;
     }
 
-    public static void setData(int[] data) {
-        DatabaseNode.data = data;
+    public LinkedList<Socket> getConnections() {
+        return connections;
     }
 
-    public static LinkedList<Socket> getSockets() {
-        return sockets;
-    }
-
-    public static HashMap<String, Socket> getNode_sockets() {
+    public HashMap<String, Socket> getNode_sockets() {
         return node_sockets;
     }
 
-    public static String getIP() {
+    public String getIP() {
         return IP;
     }
 
-    public static int getPORT() {
+    public int getPORT() {
         return PORT;
     }
 
-    public static CommunicationHandler getCommunicationHandler() {
-        return communicationHandler;
+    public Connection getCommunicationHandler() {
+        return connection;
     }
 }
