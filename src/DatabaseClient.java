@@ -36,6 +36,8 @@ public class DatabaseClient {
             in = new BufferedReader(new InputStreamReader(netSocket.getInputStream()));
             System.out.println("Connected");
 
+            Thread.sleep(1000);
+
             System.out.println("Sending: " + command);
             out.println(command);
             // Read and print out the response
@@ -43,6 +45,8 @@ public class DatabaseClient {
             while ((response = in.readLine()) != null) {
                 System.out.println(response);
             }
+
+            Thread.sleep(1000);
 
             // Terminate - close all the streams and the socket
             out.close();
@@ -55,6 +59,10 @@ public class DatabaseClient {
         } catch (IOException e) {
             e.printStackTrace();
             System.err.println("No connection with " + gateway + ".");
+            System.exit(1);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+            System.err.println("Problem ocurred while waiting after connection established.");
             System.exit(1);
         }
 

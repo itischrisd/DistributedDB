@@ -6,7 +6,7 @@ public class NodePacket {
     private final String command;
     private final String request;
     private String response;
-    private final LinkedList<String> node_trace;
+    private final LinkedList<String> visitedNodeHistory;
 
     public NodePacket(String[] packet) {
         this.ID = String.valueOf(System.currentTimeMillis());
@@ -15,7 +15,7 @@ public class NodePacket {
             this.request = packet[1];
         else
             this.request = "NUL";
-        this.node_trace = new LinkedList<>();
+        this.visitedNodeHistory = new LinkedList<>();
         switch (command) {
             case "set-value":
             case "get-value":
@@ -41,8 +41,8 @@ public class NodePacket {
         this.request = data[2];
         this.response = data[3];
         String[] history = data[4].split(",");
-        this.node_trace = new LinkedList<>();
-        this.node_trace.addAll(Arrays.asList(history));
+        this.visitedNodeHistory = new LinkedList<>();
+        this.visitedNodeHistory.addAll(Arrays.asList(history));
     }
 
     public String getID() {
@@ -65,13 +65,13 @@ public class NodePacket {
         this.response = response;
     }
 
-    public LinkedList<String> getNode_trace() {
-        return node_trace;
+    public LinkedList<String> getVisitedNodeHistory() {
+        return visitedNodeHistory;
     }
 
-    public String node_trace_string() {
+    public String visitedNodeHistoryToString() {
         StringBuilder node_trace_string = new StringBuilder();
-        for (String node : node_trace) {
+        for (String node : visitedNodeHistory) {
             node_trace_string.append(node).append(",");
         }
         return node_trace_string.toString();
@@ -79,6 +79,6 @@ public class NodePacket {
 
     @Override
     public String toString() {
-        return ID + ' ' + command + ' ' + request + ' ' + response + ' ' + node_trace_string();
+        return ID + ' ' + command + ' ' + request + ' ' + response + ' ' + visitedNodeHistoryToString();
     }
 }

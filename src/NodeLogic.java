@@ -1,15 +1,12 @@
 import java.io.IOException;
-import java.net.Socket;
 
 public class NodeLogic {
 
-    public static void doLogic(NodePacket packet, Socket socket) {
+    public static void doLogic(NodePacket packet, Connection connection) {
 
-        //handle message for the first time
-        boolean first_time = isFirstTime(packet);
-        if (first_time) {
+        if (isFirstTime(packet)) {
             addMyselfToPacketTrace(packet);
-            addPacketToLocalHistory(packet, socket);
+            addPacketToLocalHistory(packet, connection);
             executeCommand(packet);
             if (packet.getCommand().equals("new-record")) {
                 returnToClient(packet);
@@ -17,14 +14,12 @@ public class NodeLogic {
             }
         }
 
-        //pass message to other nodes for consecutive times
         boolean nieghborhood_done = isNeighborhoodDone(packet);
         if (!nieghborhood_done) {
             passToNextNode(packet);
             return;
         }
 
-        //return message up the graph
         boolean is_first_node = isFirstNode(packet);
         if (!is_first_node) {
             returnToNode(packet);
@@ -34,31 +29,34 @@ public class NodeLogic {
     }
 
     private static boolean isFirstTime(NodePacket packet) {
-        return !DatabaseNode.getLocal_packet_history().containsKey(packet.getID());
+        return !DatabaseNode.getInstance().getLocalPacketHistory().containsKey(packet.getID());
     }
 
     private static boolean isNeighborhoodDone(NodePacket packet) {
-        return packet.getNode_trace().containsAll(DatabaseNode.getNode_sockets().keySet());
+        return packet.getVisitedNodeHistory().containsAll(DatabaseNode.getInstance().getNeighbours());
     }
 
     private static boolean isFirstNode(NodePacket packet) {
-        return packet.getNode_trace().getFirst().equals(DatabaseNode.getIP() + ":" + DatabaseNode.getPORT());
+        return packet.getVisitedNodeHistory().getFirst().equals(DatabaseNode.getInstance().getDeclaredAddress());
     }
 
     private static void addMyselfToPacketTrace(NodePacket packet) {
-        packet.getNode_trace().add(DatabaseNode.getIP() + ":" + DatabaseNode.getPORT());
+        packet.getVisitedNodeHistory().add(DatabaseNode.getInstance().getDeclaredAddress());
     }
 
-    private static void addPacketToLocalHistory(NodePacket packet, Socket socket) {
-        DatabaseNode.addToPacketHistory(packet.getID(), socket.getInetAddress().getHostAddress() + ":" + socket.getPort());
+    private static void addPacketToLocalHistory(NodePacket packet, Connection connection) {
+        DatabaseNode.getInstance().addToPacketHistory(packet.getID(), connection.getDeclaredAddress());
     }
 
     private static void passToNextNode(NodePacket packet) {
-        for (String socket_address : DatabaseNode.getNode_sockets().keySet()) {
-            if (!packet.getNode_trace().contains(socket_address)) {
-                Socket neighbor_socket = DatabaseNode.getNode_sockets().get(socket_address);
-                DatabaseNode.getCommunicationHandler().setOutgoingMessage(packet.toString());
-                DatabaseNode.getCommunicationHandler().pushMessage(neighbor_socket);
+        for (String nodeAddress : DatabaseNode.getInstance().getNeighbours()) {
+            if (!packet.getVisitedNodeHistory().contains(nodeAddress)) {
+                Connection neighborConnection = DatabaseNode.getInstance().getNeighbour(nodeAddress);
+                try {
+                    neighborConnection.pushMessage(packet.toString());
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
                 return;
             }
         }
@@ -66,28 +64,26 @@ public class NodeLogic {
 
     private static void returnToNode(NodePacket packet) {
         String ID = packet.getID();
-        String origin = DatabaseNode.getLocal_packet_history().get(ID);
-        Socket node_socket;
-        for (Socket s : DatabaseNode.getNode_sockets().values()) {
-            if ((s.getInetAddress().getHostAddress() + ":" + s.getPort()).equals(origin)) {
-                node_socket = s;
-                DatabaseNode.getCommunicationHandler().setOutgoingMessage(packet.toString());
-                DatabaseNode.getCommunicationHandler().pushMessage(node_socket);
+        String origin = DatabaseNode.getInstance().getLocalPacketHistory().get(ID);
+        for (Connection connection : DatabaseNode.getInstance().getConnections()) {
+            if (connection.getDeclaredAddress().equals(origin)) {
+                try {
+                    connection.pushMessage(packet.toString());
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
                 return;
             }
         }
     }
 
     private static void returnToClient(NodePacket packet) {
-        String client_socket_address = DatabaseNode.getLocal_packet_history().get(packet.getID());
-        Socket client_socket;
-        for (Socket s : DatabaseNode.getConnections()) {
-            if ((s.getInetAddress().getHostAddress() + ":" + s.getPort()).equals(client_socket_address)) {
-                client_socket = s;
-                DatabaseNode.getCommunicationHandler().setOutgoingMessage(packet.getResponse());
-                DatabaseNode.getCommunicationHandler().pushMessage(client_socket);
+        String clientSocketAddress = DatabaseNode.getInstance().getLocalPacketHistory().get(packet.getID());
+        for (Connection connection : DatabaseNode.getInstance().getConnections()) {
+            if (connection.getDeclaredAddress().equals(clientSocketAddress)) {
                 try {
-                    client_socket.close();
+                    connection.pushMessage(packet.getResponse());
+                    connection.close();
                 } catch (IOException e) {
                     e.printStackTrace();
                 }
@@ -122,40 +118,40 @@ public class NodeLogic {
     private static void set_value(NodePacket packet) {
         int key = Integer.parseInt(packet.getRequest().split(":")[0]);
         int value = Integer.parseInt(packet.getRequest().split(":")[1]);
-        if (key == DatabaseNode.getRecord()[0]) {
-            DatabaseNode.getRecord()[1] = value;
+        if (key == DatabaseNode.getInstance().getRecord()[0]) {
+            DatabaseNode.getInstance().getRecord()[1] = value;
             packet.setResponse("OK");
         }
     }
 
     private static void get_value(NodePacket packet) {
         int key = Integer.parseInt(packet.getRequest());
-        if (key == DatabaseNode.getRecord()[0]) {
-            packet.setResponse(String.valueOf(DatabaseNode.getRecord()[0]) + ':' + DatabaseNode.getRecord()[1]);
+        if (key == DatabaseNode.getInstance().getRecord()[0]) {
+            packet.setResponse(String.valueOf(DatabaseNode.getInstance().getRecord()[0]) + ':' + DatabaseNode.getInstance().getRecord()[1]);
         }
     }
 
     private static void find_key(NodePacket packet) {
         int key = Integer.parseInt(packet.getRequest());
-        if (key == DatabaseNode.getRecord()[0]) {
-            packet.setResponse(DatabaseNode.getIP() + ":" + DatabaseNode.getPORT());
+        if (key == DatabaseNode.getInstance().getRecord()[0]) {
+            packet.setResponse(DatabaseNode.getInstance().getDeclaredAddress());
         }
     }
 
     private static void get_max(NodePacket packet) {
         int value = Integer.parseInt(packet.getResponse().split(":")[1]);
-        if (value < DatabaseNode.getRecord()[1]) {
-            packet.setResponse(String.valueOf(DatabaseNode.getRecord()[0]) + ':' + DatabaseNode.getRecord()[1]);
+        if (value < DatabaseNode.getInstance().getRecord()[1]) {
+            packet.setResponse(String.valueOf(DatabaseNode.getInstance().getRecord()[0]) + ':' + DatabaseNode.getInstance().getRecord()[1]);
         }
     }
 
     private static void get_min(NodePacket packet) {
         if (packet.getResponse().equals("NUL")) {
-            packet.setResponse(String.valueOf(DatabaseNode.getRecord()[0]) + ':' + DatabaseNode.getRecord()[1]);
+            packet.setResponse(String.valueOf(DatabaseNode.getInstance().getRecord()[0]) + ':' + DatabaseNode.getInstance().getRecord()[1]);
         } else {
             int value = Integer.parseInt(packet.getResponse().split(":")[1]);
-            if (value > DatabaseNode.getRecord()[1]) {
-                packet.setResponse(String.valueOf(DatabaseNode.getRecord()[0]) + ':' + DatabaseNode.getRecord()[1]);
+            if (value > DatabaseNode.getInstance().getRecord()[1]) {
+                packet.setResponse(String.valueOf(DatabaseNode.getInstance().getRecord()[0]) + ':' + DatabaseNode.getInstance().getRecord()[1]);
             }
         }
     }
@@ -164,6 +160,6 @@ public class NodeLogic {
         int key = Integer.parseInt(packet.getRequest().split(":")[0]);
         int value = Integer.parseInt(packet.getRequest().split(":")[1]);
         int[] new_data = {key, value};
-        DatabaseNode.setRecord(new_data);
+        DatabaseNode.getInstance().setRecord(new_data);
     }
 }
