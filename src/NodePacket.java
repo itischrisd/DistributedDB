@@ -2,13 +2,15 @@ import java.util.Arrays;
 import java.util.LinkedList;
 
 public class NodePacket {
+
     private final String ID;
     private final String command;
     private final String request;
-    private String response;
     private final LinkedList<String> visitedNodeHistory;
+    private String response;
+    private String lastSender;
 
-    public NodePacket(String[] packet) {
+    private NodePacket(String[] packet) {
         this.ID = String.valueOf(System.currentTimeMillis());
         this.command = packet[0];
         if (packet.length > 1)
@@ -34,7 +36,7 @@ public class NodePacket {
         }
     }
 
-    public NodePacket(String input_data) {
+    private NodePacket(String input_data) {
         String[] data = input_data.split(" ");
         this.ID = data[0];
         this.command = data[1];
@@ -43,6 +45,18 @@ public class NodePacket {
         String[] history = data[4].split(",");
         this.visitedNodeHistory = new LinkedList<>();
         this.visitedNodeHistory.addAll(Arrays.asList(history));
+        this.lastSender = data[5];
+    }
+
+    public static NodePacket makePacket(String data) {
+        if (Character.isDigit(data.charAt(0)))
+            return new NodePacket(data);
+        else
+            return new NodePacket(data.split(" "));
+    }
+
+    public static boolean isInternalRequest(String message) {
+        return Character.isDigit(message.charAt(0));
     }
 
     public String getID() {
@@ -69,7 +83,15 @@ public class NodePacket {
         return visitedNodeHistory;
     }
 
-    public String visitedNodeHistoryToString() {
+    public String getLastSender() {
+        return lastSender;
+    }
+
+    public void setLastSender(String lastSender) {
+        this.lastSender = lastSender;
+    }
+
+    private String visitedNodeHistoryToString() {
         StringBuilder node_trace_string = new StringBuilder();
         for (String node : visitedNodeHistory) {
             node_trace_string.append(node).append(",");
@@ -79,6 +101,6 @@ public class NodePacket {
 
     @Override
     public String toString() {
-        return ID + ' ' + command + ' ' + request + ' ' + response + ' ' + visitedNodeHistoryToString();
+        return ID + ' ' + command + ' ' + request + ' ' + response + ' ' + visitedNodeHistoryToString() + ' ' + lastSender;
     }
 }

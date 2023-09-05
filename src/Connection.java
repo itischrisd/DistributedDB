@@ -2,83 +2,90 @@ import java.io.BufferedReader;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.io.InputStreamReader;
-import java.net.InetAddress;
 import java.net.Socket;
 
 public class Connection {
 
-    private final DataOutputStream outToClient;
-    private final BufferedReader inFromClient;
-    private final Socket socket;
-    private String declaredAddress;
+    private final String declaredAddress;
+    private DataOutputStream outToClient = null;
+    private BufferedReader inFromClient = null;
+    private Socket socket;
 
-    public Connection(String host, int port) throws IOException {
-        socket = new Socket(host, port);
-        declaredAddress = host + ":" + port;
-        inFromClient = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-        outToClient = new DataOutputStream(socket.getOutputStream());
+    public Connection(String address) {
+        String[] connectionData = address.split(":");
+        String host = connectionData[0];
+        int port = Integer.parseInt(connectionData[1]);
+        try {
+            socket = new Socket(host, port);
+            inFromClient = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+            outToClient = new DataOutputStream(socket.getOutputStream());
+        } catch (IOException e) {
+            log("[ERROR] While creating streams with " + this);
+            e.printStackTrace();
+        }
+        declaredAddress = socket.getInetAddress().getHostAddress() + ":" + port;
     }
 
-    public Connection(Socket socket) throws IOException {
+    public Connection(Socket socket) {
         this.socket = socket;
         declaredAddress = socket.getInetAddress().getHostAddress() + ":" + socket.getPort();
-        inFromClient = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-        outToClient = new DataOutputStream(socket.getOutputStream());
+        try {
+            inFromClient = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+            outToClient = new DataOutputStream(socket.getOutputStream());
+        } catch (IOException e) {
+            log("[ERROR] While creating streams with " + this);
+            e.printStackTrace();
+        }
     }
 
-    public void pushMessage(String outgoingMessage) throws IOException {
-        outToClient.writeBytes(outgoingMessage + '\n');
-        outToClient.flush();
-        System.out.println("Sent packet: " + outgoingMessage + " --TO-- " + getRemoteAddress());
+    private static void log(String message) {
+        System.out.println(message);
     }
 
-    public String pullMessage() throws IOException {
-        String incomingMessage = "";
-//        if (inFromClient.ready()) {
+    public void pushMessage(String outgoingMessage) {
+        try {
+            outToClient.writeBytes(outgoingMessage + '\n');
+            outToClient.flush();
+        } catch (IOException e) {
+            log("[ERROR] While pushing message to " + this);
+            e.printStackTrace();
+        }
+        log("[SENT] " + outgoingMessage + " --TO-- " + declaredAddress);
+    }
+
+    public String pullMessage() {
+        String incomingMessage = null;
+        try {
             incomingMessage = inFromClient.readLine();
-            System.out.println("Received packet: " + incomingMessage + " --FROM-- " + getRemoteAddress());
-//        }
+        } catch (IOException e) {
+            log("[ERROR] While pulling message from " + this);
+            e.printStackTrace();
+        }
+        log("[RECEIVED] " + incomingMessage + " --FROM-- " + declaredAddress);
         return incomingMessage;
     }
 
-    public String getRemoteAddress() {
-        return socket.getInetAddress().getHostAddress() + ":" + socket.getPort();
-    }
-
-    public String getRemoteHost() {
-        return socket.getInetAddress().getHostAddress();
+    public String getLocalIp() {
+        return socket.getLocalAddress().getHostAddress();
     }
 
     public String getDeclaredAddress() {
         return declaredAddress;
     }
 
-    public void setDeclaredAddress(String declaredAddress) {
-        this.declaredAddress = declaredAddress;
+    public void close() {
+        try {
+            inFromClient.close();
+            outToClient.close();
+            socket.close();
+        } catch (IOException e) {
+            log("[ERROR] While closing connection with " + this);
+            e.printStackTrace();
+        }
     }
 
     @Override
     public String toString() {
         return getDeclaredAddress();
-    }
-
-    public InetAddress getLocalAddress() {
-        return socket.getLocalAddress();
-    }
-
-    public boolean isClosed() {
-        return socket.isClosed();
-    }
-
-    public void close() throws IOException {
-        socket.close();
-    }
-
-    public InetAddress getInetAddress() {
-        return socket.getInetAddress();
-    }
-
-    public int getPort() {
-        return socket.getPort();
     }
 }

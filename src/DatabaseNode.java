@@ -1,33 +1,24 @@
 import java.io.IOException;
-import java.net.InetSocketAddress;
-import java.nio.channels.ServerSocketChannel;
-import java.nio.channels.SocketChannel;
+import java.net.ServerSocket;
+import java.net.Socket;
 import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Scanner;
-import java.util.stream.Collectors;
 
 public class DatabaseNode {
 
     private static DatabaseNode instance;
-    private final List<Connection> connections = new LinkedList<>();
-    private final HashMap<String, String> localPacketHistory = new HashMap<>();
-    private ServerSocketChannel incomingConnectionChannel;
+    private final List<String> attachedNodes = new LinkedList<>();
+    private final HashMap<String, Connection> clientConnections = new HashMap<>();
+    private final HashMap<String, String> packetIdToOriginHistory = new HashMap<>();
+    private ServerSocket serverSocket;
     private String IP = "127.0.0.1";
     private int PORT;
     private int[] record = new int[2];
-    private boolean terminate = false;
+    private boolean running = true;
 
-    public static void main(String[] args) throws IOException {
-        instance = new DatabaseNode(args);
-        instance.establishLocalIp();
-        instance.createIncomingConnectionChannel();
-        instance.awaitConnections();
-        instance.tearDown();
-    }
-
-    public DatabaseNode(String[] parameters) throws IOException {
+    public DatabaseNode(String[] parameters) {
         for (int i = 0; i < parameters.length; i++) {
             switch (parameters[i]) {
                 case "-tcpport":
@@ -43,154 +34,170 @@ public class DatabaseNode {
         }
     }
 
+    public static void main(String[] args) {
+        instance = new DatabaseNode(args);
+        instance.createIncomingConnectionChannel();
+        instance.awaitConnections();
+        instance.tearDown();
+    }
+
     public static DatabaseNode getInstance() {
         return instance;
     }
 
+    private static void log(String message) {
+        System.out.println(message);
+    }
+
     private void setPortFromParameter(String port) {
         PORT = Integer.parseInt(port);
-        log("Set up port: " + PORT);
+        log("[SETUP] Set up port: " + PORT);
     }
 
     private void setRecordFromParameter(String record) {
         String[] recordData = record.split(":");
         this.record[0] = Integer.parseInt(recordData[0]);
         this.record[1] = Integer.parseInt(recordData[1]);
-        log("Set up record: " + this.record[0] + ":" + this.record[1]);
+        log("[SETUP] Set up record: " + this.record[0] + ":" + this.record[1]);
     }
 
-    private void connectToNodeFromParameter(String nodeAddress) throws IOException {
-        String[] connectionData = nodeAddress.split(":");
-        String host = connectionData[0];
-        int port = Integer.parseInt(connectionData[1]);
-
-        Connection connection = new Connection(host, port);
-        connections.add(connection);
-        connection.pushMessage("handshake" + " " + IP + ":" + PORT);
-        log("Connected to node: " + host + ":" + port);
-        log("Added node " + connection.getRemoteAddress() + " known as " + connection.getRemoteHost() + ":" + port);
+    private void connectToNodeFromParameter(String address) {
+        Connection connection = new Connection(address);
+        connection.pushMessage(IP + ":" + PORT + " handshake");
+        IP = connection.getLocalIp();
+        address = connection.getDeclaredAddress();
+        connection.close();
+        attachedNodes.add(address);
+        log("[SETUP] Handshake with node: " + address);
     }
 
-    public void establishLocalIp() {
-        if (connections.isEmpty()) {
-            IP = "127.0.0.1";
-        } else {
-            IP = connections.get(0).getLocalAddress().getHostAddress();
-        }
-        log("Established local IP address as: " + IP);
-    }
-
-    public void awaitConnections() throws IOException {
-        while (true) {
-            attemptAddingIncomingConnection();
-            removeClosedConnections();
-            pollIncomingMessages();
-            if (terminate) {
-                log("Terminating...");
-                break;
-            }
-        }
-    }
-
-    public void createIncomingConnectionChannel() throws IOException {
-        incomingConnectionChannel = ServerSocketChannel.open();
-        incomingConnectionChannel.bind(new InetSocketAddress(PORT));
-        incomingConnectionChannel.configureBlocking(false);
-        log("Incoming connection channel hearing on port: " + incomingConnectionChannel.getLocalAddress());
-    }
-
-    private void attemptAddingIncomingConnection() throws IOException {
-        SocketChannel socketChannel = incomingConnectionChannel.accept();
-        if (socketChannel != null) {
-            connections.add(new Connection(socketChannel.socket()));
-            log("New connection received, added to connection pool.");
-        }
-    }
-
-    private void removeClosedConnections() {
-        connections.removeIf(Connection::isClosed);
-    }
-
-    private void pollIncomingMessages() throws IOException {
-        for (Connection connection : connections) {
-            if (connection.isClosed()) continue;
-            String incomingMessage = connection.pullMessage();
-            if (incomingMessage.isEmpty()) continue;
-
-            int indexOfSpace = incomingMessage.indexOf(" ");
-            String command;
-            if (indexOfSpace != -1) command = incomingMessage.substring(0, incomingMessage.indexOf(" "));
-            else command = incomingMessage;
-
-
-            switch (command) {
-                case "OK":
-                    receiveConnectionCloseSignal(connection);
-                    break;
-                case "terminate":
-                    receiveTerminationSignal();
-                    break;
-                case "handshake":
-                    receiveHandshake(connection, incomingMessage);
-                    break;
-                default:
-                    receiveDatabaseRequest(incomingMessage, connection);
-                    break;
-            }
-        }
-    }
-
-    private void receiveConnectionCloseSignal(Connection connection) {
+    public void createIncomingConnectionChannel() {
         try {
-            connection.close();
+            serverSocket = new ServerSocket(PORT);
+            log("[SETUP] Incoming connection channel hearing on port: " + PORT);
         } catch (IOException e) {
-            log("Unnecessary connection closing attempt!");
+            log("[ERROR] While creating incoming socket channel.");
+            e.printStackTrace();
         }
-        log("Closed connection to node: " + connection.getDeclaredAddress());
+    }
+
+    public void awaitConnections() {
+        while (running) {
+            try {
+                acceptIncomingMessages();
+            } catch (IOException e) {
+                log("[ERROR] While waiting for next message.");
+                e.printStackTrace();
+            }
+        }
+    }
+
+    private void acceptIncomingMessages() throws IOException {
+        Socket socket = serverSocket.accept();
+        Connection connection = new Connection(socket);
+        String incomingMessage = connection.pullMessage();
+
+        if (NodePacket.isInternalRequest(incomingMessage)) {
+            processInternalRequest(incomingMessage);
+        } else {
+            clientConnections.put(connection.getDeclaredAddress(), connection);
+            processClientRequest(incomingMessage, connection.getDeclaredAddress());
+        }
+    }
+
+    private void processInternalRequest(String request) {
+        String command = request.substring(request.lastIndexOf(' ') + 1);
+        switch (command) {
+            case "goodbye":
+                receiveDetachNodeSignal(request);
+                break;
+            case "handshake":
+                receiveHandshake(request);
+                break;
+            default:
+                PacketProcessor.process(NodePacket.makePacket(request));
+                break;
+        }
+    }
+
+    private void processClientRequest(String request, String sender) {
+        if (request.equals("terminate")) {
+            receiveTerminationSignal();
+        } else {
+            NodePacket packet = NodePacket.makePacket(request);
+            packet.setLastSender(sender);
+            PacketProcessor.process(packet);
+        }
+    }
+
+    private void receiveHandshake(String handshake) {
+        String node = handshake.split(" ")[0];
+        attachedNodes.add(node);
+        log("[RUNNING] Attached node: " + node);
+    }
+
+    private void receiveDetachNodeSignal(String request) {
+        String node = request.split(" ")[0];
+        attachedNodes.remove(node);
+        log("[RUNNING] Detached node: " + node);
     }
 
     private void receiveTerminationSignal() {
-        terminate = true;
-        log("Termination signal received.");
+        running = false;
+        clientConnections.forEach((k, v) -> {
+            v.pushMessage("OK");
+            v.close();
+        });
+        log("[SHUTDOWN] Termination signal received.");
     }
 
-    private void receiveHandshake(Connection connection, String handshake) {
-        String IP = connection.getInetAddress().getHostAddress();
-        String PORT = handshake.split(":")[1];
-        connection.setDeclaredAddress(IP + ":" + PORT);
-        log("Connection from " + IP + ":" + connection.getPort() + " identified as " + IP + ":" + PORT);
+    public void sendToNextNode(NodePacket packet) {
+        List<String> unvisited = new LinkedList<>(attachedNodes);
+        unvisited.removeAll(packet.getVisitedNodeHistory());
+        Connection connection = new Connection(unvisited.get(0));
+        connection.pushMessage(packet.toString());
+        connection.close();
     }
 
-    private void receiveDatabaseRequest(String request, Connection connection) {
-        if (!Character.isDigit(request.charAt(0))) {
-            NodePacket recv_packet = new NodePacket(request.split(" "));
-            NodeLogic.doLogic(recv_packet, connection);
-        } else {
-            NodePacket recv_packet = new NodePacket(request);
-            NodeLogic.doLogic(recv_packet, connection);
-        }
+    public void returnToNode(NodePacket packet) {
+        String ID = packet.getID();
+        String origin = packetIdToOriginHistory.get(ID);
+        Connection connection = new Connection(origin);
+        connection.pushMessage(packet.toString());
+        connection.close();
     }
 
-    private void tearDown() throws IOException {
-        for (Connection connection : connections) {
-            connection.pushMessage("OK");
+    public void returnToClient(NodePacket packet) {
+        String clientAddress = packetIdToOriginHistory.get(packet.getID());
+        Connection connection = clientConnections.get(clientAddress);
+        connection.pushMessage(packet.getResponse());
+        connection.close();
+        clientConnections.remove(clientAddress);
+    }
+
+    private void tearDown() {
+        for (String node : attachedNodes) {
+            Connection connection = new Connection(node);
+            connection.pushMessage(IP + ":" + PORT + " goodbye");
             connection.close();
         }
-        log("Node terminated, all connections closed. Press ENTER to end process...");
+        try {
+            serverSocket.close();
+            log("[SHUTDOWN] Node terminated, all connections closed. Press ENTER to end process...");
+        } catch (IOException e) {
+            log("[ERROR] While closing incoming socket channel.");
+            e.printStackTrace();
+        }
         Scanner scanner = new Scanner(System.in);
         scanner.nextLine();
     }
 
     public void addToPacketHistory(String id, String origin) {
-        localPacketHistory.put(id, origin);
+        packetIdToOriginHistory.put(id, origin);
     }
 
-    private void log(String message) {
-        System.out.println(message);
-    }
-
-    public HashMap<String, String> getLocalPacketHistory() {
-        return localPacketHistory;
+    public HashMap<String, String> getPacketIdToOriginHistory() {
+        return packetIdToOriginHistory;
     }
 
     public int[] getRecord() {
@@ -201,22 +208,11 @@ public class DatabaseNode {
         this.record = record;
     }
 
-    public List<String> getNeighbours() {
-        List<String> neighbours = new LinkedList<>();
-        for (Connection connection : connections)
-            neighbours.add(connection.getDeclaredAddress());
-        return neighbours;
-    }
-
     public String getDeclaredAddress() {
         return IP + ":" + PORT;
     }
 
-    public Connection getNeighbour(String declaredAddress) {
-        return connections.stream().filter(e -> e.getDeclaredAddress().equals(declaredAddress)).collect(Collectors.toList()).get(0);
-    }
-
-    public List<Connection> getConnections() {
-        return connections;
+    public List<String> getAttachedNodes() {
+        return attachedNodes;
     }
 }

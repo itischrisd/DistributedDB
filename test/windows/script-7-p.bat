@@ -12,7 +12,7 @@ timeout 1 > NUL
 start java DatabaseNode -tcpport 9005 -connect localhost:9004 -record 6:3
 timeout 1 > NUL
 start java DatabaseNode -tcpport 9006 -connect localhost:9005 -connect localhost:9000 -record 7:1
-timeout 2 > NUL
+timeout 1 > NUL
 
 start java DatabaseClient -gateway localhost:9001 -operation get-max
 start java DatabaseClient -gateway localhost:9002 -operation get-min
