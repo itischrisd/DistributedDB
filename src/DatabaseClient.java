@@ -63,9 +63,9 @@ public class DatabaseClient {
         } else if (e instanceof IOException) {
             logErr("No connection with " + gateway + ".");
         } else if (e instanceof InterruptedException) {
-            logErr("Problem ocurred while waiting after connection established.");
+            logErr("Problem occurred while waiting after connection established.");
         } else {
-            logErr("Unknown error ocurred.");
+            logErr("Unknown error occurred.");
         }
         log("Press ENTER to end process...");
         Scanner scanner = new Scanner(System.in);
